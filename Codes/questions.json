@@ -1,0 +1,488 @@
+{
+  "schema_version": 1,
+  "quizzes": [
+    {
+      "quiz_id": "networking-basics",
+      "title": "Networking Basics",
+      "description": "Network edge, packet switching, and introductory network services.",
+      "questions": [
+        {
+          "question_id": "NB01",
+          "text": "Which transport protocol provides a reliable ordered byte stream?",
+          "options": {
+            "A": "UDP",
+            "B": "TCP",
+            "C": "IP",
+            "D": "ARP"
+          },
+          "answer": "B",
+          "time_limit": 10,
+          "points": 100
+        },
+        {
+          "question_id": "NB02",
+          "text": "Which device normally forwards IP packets between different networks?",
+          "options": {
+            "A": "Router",
+            "B": "Repeater",
+            "C": "Hub",
+            "D": "Ethernet bridge"
+          },
+          "answer": "A",
+          "time_limit": 15,
+          "points": 200
+        },
+        {
+          "question_id": "NB03",
+          "text": "In store-and-forward packet switching, what must a router do before sending a packet on its next link?",
+          "options": {
+            "A": "Reserve a circuit for the entire session",
+            "B": "Wait for an application-level reply",
+            "C": "Receive the complete packet",
+            "D": "Convert the packet into a DNS record"
+          },
+          "answer": "C",
+          "time_limit": 15,
+          "points": 150
+        },
+        {
+          "question_id": "NB04",
+          "text": "Which protocol resolves a domain name to an IP address?",
+          "options": {
+            "A": "DNS",
+            "B": "SMTP",
+            "C": "IMAP",
+            "D": "HTTP"
+          },
+          "answer": "A",
+          "time_limit": 15,
+          "points": 150
+        },
+        {
+          "question_id": "NB05",
+          "text": "What is the default TCP port for HTTPS?",
+          "options": {
+            "A": "21",
+            "B": "25",
+            "C": "80",
+            "D": "443"
+          },
+          "answer": "D",
+          "time_limit": 20,
+          "points": 250
+        }
+      ]
+    },
+    {
+      "quiz_id": "transport-layer",
+      "title": "Transport Layer and Reliability",
+      "description": "Transport services, demultiplexing, TCP flow control, acknowledgements, and reliable transfer.",
+      "questions": [
+        {
+          "question_id": "TL01",
+          "text": "Which transport protocol offers connectionless datagram delivery?",
+          "options": {
+            "A": "TCP",
+            "B": "UDP",
+            "C": "IP",
+            "D": "QUIC"
+          },
+          "answer": "B",
+          "time_limit": 10,
+          "points": 100
+        },
+        {
+          "question_id": "TL02",
+          "text": "Which layer provides process-to-process delivery between applications on different hosts?",
+          "options": {
+            "A": "Transport",
+            "B": "Network",
+            "C": "Data link",
+            "D": "Physical"
+          },
+          "answer": "A",
+          "time_limit": 15,
+          "points": 150
+        },
+        {
+          "question_id": "TL03",
+          "text": "Which TCP mechanism limits a sender according to the receiving host's available buffer space?",
+          "options": {
+            "A": "Sequence number field",
+            "B": "Retransmission timer",
+            "C": "Congestion window alone",
+            "D": "Receiver-advertised window"
+          },
+          "answer": "D",
+          "time_limit": 20,
+          "points": 200
+        },
+        {
+          "question_id": "TL04",
+          "text": "Which TCP header field names the receiving service port?",
+          "options": {
+            "A": "Destination port",
+            "B": "Source port",
+            "C": "Acknowledgement number",
+            "D": "Receive window"
+          },
+          "answer": "A",
+          "time_limit": 10,
+          "points": 100
+        },
+        {
+          "question_id": "TL05",
+          "text": "Because TCP carries a byte stream, how can an application recover its own message boundaries?",
+          "options": {
+            "A": "Treat each sendall call as one received message",
+            "B": "Use a length prefix or delimiter in its application protocol",
+            "C": "Treat each TCP segment as one application message",
+            "D": "Use each ACK as an application delimiter"
+          },
+          "answer": "B",
+          "time_limit": 15,
+          "points": 250
+        },
+        {
+          "question_id": "TL06",
+          "text": "What does a UDP checksum help a receiver do?",
+          "options": {
+            "A": "Retransmit a lost datagram",
+            "B": "Guarantee datagram order",
+            "C": "Encrypt the datagram payload",
+            "D": "Detect some data corruption"
+          },
+          "answer": "D",
+          "time_limit": 15,
+          "points": 150
+        },
+        {
+          "question_id": "TL07",
+          "text": "A TCP receiver has received bytes numbered 200 through 239 in order. What cumulative ACK number indicates the next expected byte?",
+          "options": {
+            "A": "200",
+            "B": "239",
+            "C": "240",
+            "D": "241"
+          },
+          "answer": "C",
+          "time_limit": 20,
+          "points": 200
+        },
+        {
+          "question_id": "TL08",
+          "text": "In Selective Repeat, what can the receiver do when a correct packet arrives after a missing earlier packet?",
+          "options": {
+            "A": "Buffer and individually acknowledge it",
+            "B": "Immediately deliver all later data to the application",
+            "C": "Discard every later packet without an ACK",
+            "D": "Retransmit the missing packet itself"
+          },
+          "answer": "A",
+          "time_limit": 30,
+          "points": 300
+        }
+      ]
+    },
+    {
+      "quiz_id": "application-layer",
+      "title": "Application Layer and Internet Services",
+      "description": "HTTP, email, DNS, caching, and content delivery.",
+      "questions": [
+        {
+          "question_id": "AP01",
+          "text": "Which HTTP method requests a representation of a resource without submitting an update?",
+          "options": {
+            "A": "GET",
+            "B": "POST",
+            "C": "PUT",
+            "D": "DELETE"
+          },
+          "answer": "A",
+          "time_limit": 10,
+          "points": 100
+        },
+        {
+          "question_id": "AP02",
+          "text": "Which HTTP status code means the requested resource was not found?",
+          "options": {
+            "A": "200",
+            "B": "301",
+            "C": "404",
+            "D": "503"
+          },
+          "answer": "C",
+          "time_limit": 15,
+          "points": 150
+        },
+        {
+          "question_id": "AP03",
+          "text": "What allows HTTP/2 messages from several streams to share one connection?",
+          "options": {
+            "A": "One new TCP connection for each object",
+            "B": "Interleaved frames from different streams",
+            "C": "A separate DNS query for each frame",
+            "D": "A single response with no framing"
+          },
+          "answer": "B",
+          "time_limit": 20,
+          "points": 250
+        },
+        {
+          "question_id": "AP04",
+          "text": "How can a web application associate separate stateless HTTP requests with one signed-in user?",
+          "options": {
+            "A": "By relying only on the TCP port number",
+            "B": "By assuming HTTP remembers earlier requests",
+            "C": "By changing the user's IP address",
+            "D": "By using a cookie or token linked to server-side session state"
+          },
+          "answer": "D",
+          "time_limit": 15,
+          "points": 150
+        },
+        {
+          "question_id": "AP05",
+          "text": "A cached object has not changed after a conditional GET. Which response avoids sending the object body again?",
+          "options": {
+            "A": "200 OK with the full object",
+            "B": "301 Moved Permanently",
+            "C": "304 Not Modified",
+            "D": "404 Not Found"
+          },
+          "answer": "C",
+          "time_limit": 20,
+          "points": 250
+        },
+        {
+          "question_id": "AP06",
+          "text": "Which protocol transfers an email between the sending and receiving mail servers?",
+          "options": {
+            "A": "IMAP",
+            "B": "POP3",
+            "C": "SMTP",
+            "D": "HTTP GET"
+          },
+          "answer": "C",
+          "time_limit": 20,
+          "points": 200
+        },
+        {
+          "question_id": "AP07",
+          "text": "Which mailbox-access protocol synchronizes messages and flags across several devices?",
+          "options": {
+            "A": "SMTP",
+            "B": "IMAP",
+            "C": "DNS",
+            "D": "POP3"
+          },
+          "answer": "B",
+          "time_limit": 15,
+          "points": 200
+        },
+        {
+          "question_id": "AP08",
+          "text": "Which DNS record type identifies a mail server for a domain?",
+          "options": {
+            "A": "A",
+            "B": "CNAME",
+            "C": "AAAA",
+            "D": "MX"
+          },
+          "answer": "D",
+          "time_limit": 20,
+          "points": 200
+        },
+        {
+          "question_id": "AP09",
+          "text": "During an iterative DNS lookup, what may a contacted DNS server return instead of the final address?",
+          "options": {
+            "A": "A referral to another DNS server",
+            "B": "A TCP ACK for the resolver's next byte",
+            "C": "An IMAP mailbox flag",
+            "D": "A permanent HTTP cookie"
+          },
+          "answer": "A",
+          "time_limit": 20,
+          "points": 250
+        },
+        {
+          "question_id": "AP10",
+          "text": "What is a main purpose of mapping a video request to a CDN edge server?",
+          "options": {
+            "A": "To replace the player's codec",
+            "B": "To require every request to reach one distant origin",
+            "C": "To serve content from a suitable edge based on path, load and content",
+            "D": "To make UDP guarantee delivery"
+          },
+          "answer": "C",
+          "time_limit": 30,
+          "points": 300
+        }
+      ]
+    },
+    {
+      "quiz_id": "socket-programming",
+      "title": "Socket Programming and Communication",
+      "description": "UDP/TCP socket calls, encoding, framing, threads, and transfer verification.",
+      "questions": [
+        {
+          "question_id": "SK01",
+          "text": "Which Python socket type is used for a UDP datagram socket?",
+          "options": {
+            "A": "SOCK_STREAM",
+            "B": "SOCK_DGRAM",
+            "C": "SOCK_RAW",
+            "D": "SOCK_SEQPACKET"
+          },
+          "answer": "B",
+          "time_limit": 10,
+          "points": 100
+        },
+        {
+          "question_id": "SK02",
+          "text": "What extra information does Python's recvfrom() return with the bytes of a UDP datagram?",
+          "options": {
+            "A": "The sender's address",
+            "B": "A TCP sequence number",
+            "C": "The recipient's DNS name",
+            "D": "A guaranteed delivery receipt"
+          },
+          "answer": "A",
+          "time_limit": 15,
+          "points": 150
+        },
+        {
+          "question_id": "SK03",
+          "text": "What does binding a server socket to 0.0.0.0 mean?",
+          "options": {
+            "A": "Send each reply to 0.0.0.0",
+            "B": "Connect to an Internet server at 0.0.0.0",
+            "C": "Listen on all local IPv4 interfaces",
+            "D": "Disable the server's port number"
+          },
+          "answer": "C",
+          "time_limit": 15,
+          "points": 150
+        },
+        {
+          "question_id": "SK04",
+          "text": "After a TCP listening socket accepts a client, which socket should the server use to exchange data with that client?",
+          "options": {
+            "A": "The UDP broadcast socket",
+            "B": "The new connected socket returned by accept()",
+            "C": "Only the original listening socket",
+            "D": "A DNS resolver socket"
+          },
+          "answer": "B",
+          "time_limit": 20,
+          "points": 200
+        },
+        {
+          "question_id": "SK05",
+          "text": "Which call does the TCP client use to open a connection to the chosen server host and port?",
+          "options": {
+            "A": "bind()",
+            "B": "listen()",
+            "C": "accept()",
+            "D": "connect()"
+          },
+          "answer": "D",
+          "time_limit": 15,
+          "points": 150
+        },
+        {
+          "question_id": "SK06",
+          "text": "What does recv() returning an empty bytes object usually indicate in a TCP connection?",
+          "options": {
+            "A": "The peer closed its sending side",
+            "B": "The next message is empty but the peer remains open",
+            "C": "The receiver obtained a UDP checksum",
+            "D": "The socket automatically retries the read"
+          },
+          "answer": "A",
+          "time_limit": 15,
+          "points": 150
+        },
+        {
+          "question_id": "SK07",
+          "text": "Why might a UDP client set a socket timeout before waiting for a reply?",
+          "options": {
+            "A": "To make UDP delivery reliable",
+            "B": "To increase the server's port number",
+            "C": "To avoid waiting indefinitely when no reply arrives",
+            "D": "To preserve TCP message boundaries"
+          },
+          "answer": "C",
+          "time_limit": 10,
+          "points": 100
+        },
+        {
+          "question_id": "SK08",
+          "text": "Before passing a Python text message to sendto(), what should the program do?",
+          "options": {
+            "A": "Convert it to a DNS record",
+            "B": "Encode it as UTF-8 bytes",
+            "C": "Open a TCP stream",
+            "D": "Calculate a file SHA-256 digest"
+          },
+          "answer": "B",
+          "time_limit": 10,
+          "points": 100
+        },
+        {
+          "question_id": "SK09",
+          "text": "What does struct.Struct('!I') represent when used for a protocol length field?",
+          "options": {
+            "A": "A one-byte signed integer in host byte order",
+            "B": "A four-character UTF-8 string",
+            "C": "An eight-byte floating-point value",
+            "D": "A four-byte unsigned integer in network byte order"
+          },
+          "answer": "D",
+          "time_limit": 20,
+          "points": 250
+        },
+        {
+          "question_id": "SK10",
+          "text": "Why is a helper such as recv_exact(sock, 4) useful when reading a four-byte field from TCP?",
+          "options": {
+            "A": "Because one recv(4) always returns exactly four bytes",
+            "B": "Because TCP identifies each application field",
+            "C": "Because recv may return fewer bytes, so the reader must loop",
+            "D": "Because four bytes always contain an entire file"
+          },
+          "answer": "C",
+          "time_limit": 20,
+          "points": 250
+        },
+        {
+          "question_id": "SK11",
+          "text": "After starting worker threads, which threading operation waits for a worker to finish?",
+          "options": {
+            "A": "start()",
+            "B": "recvfrom()",
+            "C": "sendall()",
+            "D": "join()"
+          },
+          "answer": "D",
+          "time_limit": 15,
+          "points": 150
+        },
+        {
+          "question_id": "SK12",
+          "text": "When can a file receiver safely treat a transfer as complete?",
+          "options": {
+            "A": "As soon as the TCP connection closes",
+            "B": "When byte count, block count and SHA-256 all match metadata",
+            "C": "When the first file block arrives",
+            "D": "When the sender calls sendall() once"
+          },
+          "answer": "B",
+          "time_limit": 30,
+          "points": 300
+        }
+      ]
+    }
+  ]
+}
