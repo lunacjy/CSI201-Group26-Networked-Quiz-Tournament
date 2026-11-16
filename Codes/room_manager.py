@@ -62,7 +62,10 @@ class RoomManager:
 
     def list_rooms(self, ctx: RequestContext, payload: dict) -> ServiceResult:
         with self._lock:
-            rooms = [r for r in self._rooms.values() if r.status == "LOBBY"]
+            rooms = [
+                r for r in self._rooms.values()
+                if r.status == "LOBBY" and len(r.players) < self.MAX_PLAYERS
+            ]
             result = [{"room_code": r.code, "quiz_id": r.quiz_id,
                        "host_id": r.players[r.host_id].user_id,
                        "player_count": len(r.players), "max_players": self.MAX_PLAYERS,
@@ -165,6 +168,9 @@ class RoomManager:
             with room.lock:
                 was_host = room.host_id == session_id
                 room.players.pop(session_id, None)
+                room.joined_order = [
+                    sid for sid in room.joined_order if sid != session_id
+                ]
                 self._membership.pop(session_id, None)
                 if hasattr(self.quiz_engine, "player_departed"):
                     quiz_events.extend(self.quiz_engine.player_departed(room.code, session_id))
