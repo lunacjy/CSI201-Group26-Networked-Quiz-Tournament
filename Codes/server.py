@@ -415,7 +415,6 @@ class QuizServer:
         return True
 
     def publish(self, event: PendingEvent) -> PublishResult:
-        """EventSink entry point for B/C timer and state-transition callbacks."""
         if self._stop_event.is_set():
             return PublishResult(False, 0, "SERVER_STOPPING")
         if not validate_pending_event(event):
@@ -460,7 +459,6 @@ class QuizServer:
 
 
 class ServerEventSink:
-    """A's concrete EventSink; B/C publish data, never raw socket operations."""
 
     def __init__(self, server: QuizServer) -> None:
         self._server = server
