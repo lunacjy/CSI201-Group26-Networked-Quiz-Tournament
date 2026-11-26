@@ -93,9 +93,10 @@ Run the automated tests from the `Codes` directory:
 python3 -m unittest discover -s tests -v
 ```
 
-The current version passed all 92 automated tests in the provided Docker environment using Python 3.12.16.
-
-Docker testing screenshots are available in the repository's `Test_Evidence` directory.
+The submitted suite contains 92 automated tests covering question-bank validation,
+TCP message handling, sessions, room operations, quiz timing, scoring, concurrency and
+shutdown. Run the suite in the examiner-provided Docker environment to verify the
+submitted version. A successful run reports `Ran 92 tests` followed by `OK`.
 
 ## Assumptions
 
@@ -110,6 +111,7 @@ Docker testing screenshots are available in the repository's `Test_Evidence` dir
 - Network traffic is not encrypted with TLS, and the application does not provide password-based identity verification.
 - After a server disconnects, a client waiting for terminal input may require user input or `Ctrl+C` to exit.
 - The server limits concurrent connections to 128; successful tests with ten clients do not establish performance at that limit.
+- Idle unauthenticated connections and incomplete frames have no login or frame-completion deadline. They can hold connection slots until the peer disconnects or the server closes the connection.
 
 ## Notes
 
@@ -117,3 +119,4 @@ Docker testing screenshots are available in the repository's `Test_Evidence` dir
 - Question timing and scoring are controlled by the server.
 - Each room runs its quiz independently.
 - The client does not read the question bank directly.
+- Option control characters are displayed as visible escapes. Local request encoding errors, including oversized commands, are reported without exiting the CLI.
