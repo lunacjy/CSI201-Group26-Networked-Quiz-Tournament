@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections import deque
+from dataclasses import dataclass, field, replace
 import logging
-from typing import Any, Protocol
+import threading
+from typing import Any, Callable, Protocol
 
 
 LOG = logging.getLogger("csi201.router")
@@ -17,6 +19,7 @@ class RequestContext:
     name: str
     connection_handle: object
     request_id: str
+    defer_room_events: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +27,61 @@ class PendingEvent:
     event_type: str
     recipients: tuple[str, ...]
     payload: dict[str, Any]
+    departed: dict[str, threading.Event] = field(default_factory=dict, repr=False, compare=False)
+
+
+@dataclass(slots=True)
+class _EventBatch:
+    events: tuple[PendingEvent, ...]
+    ready: bool = False
+
+
+class RoomEventStream:
+    """One FIFO for a room's committed batches, with at most one drainer."""
+
+    def __init__(self, publish: Callable[[tuple[PendingEvent, ...]], None]):
+        self._publish = publish
+        self._batches: deque[_EventBatch] = deque()
+        self._members: dict[str, threading.Event] = {}
+        self._lock = threading.Lock()
+        self._draining = False
+
+    def add_member(self, session_id: str) -> None:
+        with self._lock:
+            self._members[session_id] = threading.Event()
+
+    def remove_member(self, session_id: str) -> None:
+        with self._lock:
+            self._members.pop(session_id).set()
+
+    def stage(self, events: tuple[PendingEvent, ...]) -> Callable[[], None]:
+        # Reserve the position at commit time. Release outside business locks,
+        # after the response attempt when the batch belongs to a request.
+        with self._lock:
+            batch = _EventBatch(tuple(
+                replace(event, departed={sid: self._members[sid] for sid in event.recipients
+                                         if sid in self._members})
+                for event in events
+            ))
+            self._batches.append(batch)
+        return lambda: self._release(batch)
+
+    def _release(self, batch: _EventBatch) -> None:
+        with self._lock:
+            batch.ready = True
+            if self._draining:
+                return
+            self._draining = True
+        while True:
+            with self._lock:
+                if not self._batches or not self._batches[0].ready:
+                    self._draining = False
+                    return
+                events = self._batches.popleft().events
+            try:
+                self._publish(events)
+            except Exception:
+                LOG.exception("room event batch publication failed")
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +107,7 @@ class ServiceResult:
     error_code: str | None = None
     error_message: str | None = None
     events: tuple[PendingEvent, ...] = field(default_factory=tuple)
+    release_events: Callable[[], None] | None = None
 
     @classmethod
     def success(
@@ -56,8 +115,10 @@ class ServiceResult:
         response_type: str,
         payload: dict[str, Any],
         events: tuple[PendingEvent, ...] = (),
+        release_events: Callable[[], None] | None = None,
     ) -> "ServiceResult":
-        return cls(response_type=response_type, response_payload=payload, events=events)
+        return cls(response_type=response_type, response_payload=payload, events=events,
+                   release_events=release_events)
 
     @classmethod
     def error(cls, code: str, message: str) -> "ServiceResult":

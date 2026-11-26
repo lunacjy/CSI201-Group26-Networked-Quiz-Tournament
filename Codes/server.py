@@ -65,7 +65,7 @@ class ConnectionState:
     closed: bool = False
     _request_order: deque[str] = field(default_factory=deque)
     _request_ids: set[str] = field(default_factory=set)
-    event_outbox: queue.Queue[bytes | None] = field(
+    event_outbox: queue.Queue[tuple[bytes, threading.Event | None] | None] = field(
         default_factory=lambda: queue.Queue(maxsize=EVENT_QUEUE_LIMIT), repr=False
     )
     event_sender: threading.Thread | None = field(default=None, repr=False)
@@ -200,16 +200,18 @@ class QuizServer:
         try:
             while True:
                 try:
-                    frame = state.event_outbox.get(timeout=0.25)
+                    item = state.event_outbox.get(timeout=0.25)
                 except queue.Empty:
                     if state.closed or self._stop_event.is_set():
                         return
                     continue
                 try:
-                    if frame is None or state.closed or self._stop_event.is_set():
+                    if item is None or state.closed or self._stop_event.is_set():
                         return
+                    frame, departed = item
                     with state.send_lock:
-                        state.sock.sendall(frame)
+                        if departed is None or not departed.is_set():
+                            state.sock.sendall(frame)
                 except OSError:
                     self._close_socket(state)
                     return
@@ -299,6 +301,7 @@ class QuizServer:
             session.name,
             state.handle,
             request_id,
+            defer_room_events=True,
         )
         result = self.router.dispatch(message_type, ctx, message["payload"])
         return self._deliver_result(state, session.session_id, request_id, result)
@@ -342,11 +345,13 @@ class QuizServer:
             session_id,
             result.response_payload or {},
         )
-        if not self._send_message(state, response):
-            return False
-        for event in result.events:
-            self.send_event(event)
-        return True
+        sent = self._send_message(state, response)
+        if result.release_events is not None:
+            result.release_events()
+        else:
+            for event in result.events:
+                self.send_event(event)
+        return sent
 
     def _send_error(
         self,
@@ -380,6 +385,9 @@ class QuizServer:
             return 0
         delivered = 0
         for session_id in tuple(dict.fromkeys(event.recipients)):
+            departed = event.departed.get(session_id)
+            if departed is not None and departed.is_set():
+                continue
             session = self.sessions.get(session_id)
             if session is None:
                 continue
@@ -390,11 +398,12 @@ class QuizServer:
             message = make_event(
                 event.event_type, self._next_event_id(), session_id, dict(event.payload)
             )
-            if self._enqueue_event(state, message):
+            if self._enqueue_event(state, message, departed):
                 delivered += 1
         return delivered
 
-    def _enqueue_event(self, state: ConnectionState, message: dict[str, Any]) -> bool:
+    def _enqueue_event(self, state: ConnectionState, message: dict[str, Any],
+                       departed: threading.Event | None = None) -> bool:
         try:
             frame = encode_message(message)
         except ValueError:
@@ -402,10 +411,10 @@ class QuizServer:
             return False
         close_slow_client = False
         with state.cleanup_lock:
-            if state.closed or self._stop_event.is_set():
+            if state.closed or self._stop_event.is_set() or (departed is not None and departed.is_set()):
                 return False
             try:
-                state.event_outbox.put_nowait(frame)
+                state.event_outbox.put_nowait((frame, departed))
             except queue.Full:
                 close_slow_client = True
         if close_slow_client:
@@ -415,6 +424,7 @@ class QuizServer:
         return True
 
     def publish(self, event: PendingEvent) -> PublishResult:
+        """Publish timer and state-transition events from application services."""
         if self._stop_event.is_set():
             return PublishResult(False, 0, "SERVER_STOPPING")
         if not validate_pending_event(event):
@@ -459,6 +469,7 @@ class QuizServer:
 
 
 class ServerEventSink:
+    """Forward service events without exposing client sockets."""
 
     def __init__(self, server: QuizServer) -> None:
         self._server = server
