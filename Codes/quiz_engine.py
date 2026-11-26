@@ -7,10 +7,24 @@ import threading
 import time
 from typing import Any, Callable
 
-from message_router import PendingEvent, RequestContext, ServiceResult
+from message_router import PendingEvent, RequestContext, RoomEventStream, ServiceResult
 from question_bank import QuestionBank
 
 LOG = logging.getLogger("csi201.quiz")
+
+
+class _QuizTimer(threading.Timer):
+    def __init__(self, interval: float, callback: Callable, args: tuple,
+                 on_exit: Callable[[threading.Timer], None]):
+        super().__init__(interval, callback, args=args)
+        self._on_exit = on_exit
+
+    def run(self) -> None:
+        try:
+            super().run()
+        finally:
+            # Timer.run can skip its callback entirely after cancellation.
+            self._on_exit(self)
 
 
 @dataclass
@@ -20,12 +34,18 @@ class QuizRun:
     players: dict[str, tuple[str, str]]
     questions: tuple[Any, ...]
     scores: dict[str, int]
+    events: RoomEventStream | None = field(default=None, kw_only=True, repr=False)
     question_index: int = 0
     deadline: float = 0.0
     answers: dict[str, str] = field(default_factory=dict)
     timer: threading.Timer | None = None
     timers: set[threading.Timer] = field(default_factory=set, repr=False)
     closed: bool = False
+
+    def stage(self, events: list[PendingEvent]) -> Callable[[], None]:
+        # Detached runs used for leaderboard calculations have no event stream.
+        assert self.events is not None
+        return self.events.stage(tuple(events))
 
 
 class QuizEngine:
@@ -42,7 +62,7 @@ class QuizEngine:
         self._session_room: dict[str, str] = {}
         self._timers: set[threading.Timer] = set()
         self._timer_runs: dict[threading.Timer, QuizRun] = {}
-        self._pending_timer_joins: list[threading.Timer] = []
+        self._pending_timer_joins: dict[str, set[threading.Timer]] = {}
         self._room_manager: object | None = None
         self._monotonic = monotonic
 
@@ -64,6 +84,15 @@ class QuizEngine:
     def bind_room_manager(self, manager: object) -> None:
         self._room_manager = manager
 
+    @property
+    def transition_lock(self):
+        """Let RoomManager commit membership and its quiz effects together."""
+        return self._lock
+
+    def new_event_stream(self) -> RoomEventStream:
+        stream = RoomEventStream(lambda events: self._publish(events, stream))
+        return stream
+
     def has_quiz(self, quiz_id: str) -> bool:
         return any(q.quiz_id == quiz_id for q in self.bank.quizzes)
 
@@ -72,7 +101,10 @@ class QuizEngine:
             {"quiz_id": q.quiz_id, "title": q.title, "description": q.description,
              "question_count": len(q.questions)} for q in self.bank.quizzes]})
 
-    def start_room(self, room_code: str, quiz_id: str, players: tuple[Any, ...]) -> tuple[PendingEvent, ...] | ServiceResult:
+    def start_room(
+        self, room_code: str, quiz_id: str, players: tuple[Any, ...],
+        *, stream: RoomEventStream | None = None,
+    ) -> tuple[PendingEvent, ...] | ServiceResult:
         quiz = next((q for q in self.bank.quizzes if q.quiz_id == quiz_id), None)
         if quiz is None:
             return ServiceResult.error("QUIZ_NOT_FOUND", "Quiz ID does not exist.")
@@ -81,7 +113,7 @@ class QuizEngine:
                 return ServiceResult.error("INVALID_STATE", "Quiz already started.")
             members = {p.session_id: (p.user_id, p.name) for p in players}
             run = QuizRun(room_code, quiz_id, members, quiz.questions,
-                          {sid: 0 for sid in members})
+                          {sid: 0 for sid in members}, events=stream or self.new_event_stream())
             self._runs[room_code] = run
             for sid in members:
                 self._session_room[sid] = room_code
@@ -104,8 +136,9 @@ class QuizEngine:
             "question_id": q.question_id, "number": run.question_index + 1,
             "text": q.text, "options": dict(q.options), "time_limit": q.time_limit,
             "points": q.points})
-        timer = threading.Timer(q.time_limit, self._timer_callback,
-                               args=(run.room_code, run.question_index, run))
+        timer = _QuizTimer(q.time_limit, self._timer_callback,
+                           (run.room_code, run.question_index, run),
+                           lambda timer: self._timer_exited(run.room_code, timer))
         timer.daemon = True
         self._timers.add(timer)
         self._timer_runs[timer] = run
@@ -121,13 +154,14 @@ class QuizEngine:
         return event
 
     def submit_answer(self, ctx: RequestContext, payload: dict) -> ServiceResult:
-        publish: list[PendingEvent] = []
+        release = None
         with self._lock:
             code = self._session_room.get(ctx.session_id)
             run = self._runs.get(code) if code else None
             if run is None or run.closed:
                 return ServiceResult.error("NOT_IN_QUIZ", "You are not in an active quiz.")
-            q = run.questions[run.question_index]
+            index = run.question_index
+            q = run.questions[index]
             if self._monotonic() >= run.deadline:
                 pass_timeout = True
             else:
@@ -143,12 +177,13 @@ class QuizEngine:
             else:
                 run.answers[ctx.session_id] = payload["answer"]
                 if len(run.answers) == len(run.players):
-                    publish = self._close_question_locked(run)
+                    release = run.stage(self._close_question_locked(run))
         if pass_timeout:
-            self._timeout(code, run.question_index, run)
+            self._timeout(run.room_code, index, run)
             return ServiceResult.error("QUESTION_CLOSED", "The deadline has passed.")
-        self._reap_timers()
-        self._publish(publish)
+        if release is not None:
+            release()
+            self._reap_timers(run.room_code)
         return ServiceResult.success("ANSWER_RESPONSE", {"accepted": True, "question_id": payload["question_id"]})
 
     def _timer_callback(self, room_code: str, index: int, expected_run: QuizRun) -> None:
@@ -156,24 +191,17 @@ class QuizEngine:
             self._timeout(room_code, index, expected_run)
         except Exception:
             LOG.exception("quiz timer callback failed for room %s", room_code)
-        finally:
-            with self._lock:
-                self._timers.discard(threading.current_thread())
-                run = self._timer_runs.pop(threading.current_thread(), None)
-                if run is not None:
-                    run.timers.discard(threading.current_thread())
 
     def _timeout(self, room_code: str, index: int, expected_run: QuizRun | None = None) -> None:
-        events: list[PendingEvent] = []
         with self._lock:
             run = self._runs.get(room_code)
             if (run is None or (expected_run is not None and run is not expected_run)
                     or run.closed or run.question_index != index
                     or self._monotonic() < run.deadline):
                 return
-            events = self._close_question_locked(run)
-        self._reap_timers()
-        self._publish(events)
+            release = run.stage(self._close_question_locked(run))
+        release()
+        self._reap_timers(room_code)
 
     def _close_question_locked(self, run: QuizRun) -> list[PendingEvent]:
         self._cancel_timer_locked(run)
@@ -205,17 +233,17 @@ class QuizEngine:
             events.append(self._open_question_locked(run))
         return events
 
-    def _publish(self, events: list[PendingEvent]) -> None:
+    def _publish(self, events: tuple[PendingEvent, ...], stream: RoomEventStream) -> None:
         for event in events:
+            if event.event_type == "QUIZ_FINISHED_EVENT" and self._room_manager:
+                try:
+                    self._room_manager.mark_finished(event.payload["room_code"], stream)
+                except Exception:
+                    LOG.exception("failed to mark finished room %s", event.payload["room_code"])
             try:
                 self.event_sink.publish(event)
             except Exception:
                 LOG.exception("event publication failed for %s", event.event_type)
-            if event.event_type == "QUIZ_FINISHED_EVENT" and self._room_manager:
-                try:
-                    self._room_manager.mark_finished(event.payload["room_code"])
-                except Exception:
-                    LOG.exception("failed to mark finished room %s", event.payload["room_code"])
 
     def _leaderboard(self, run: QuizRun) -> list[dict[str, Any]]:
         order = {sid: i for i, sid in enumerate(run.players)}
@@ -260,24 +288,20 @@ class QuizEngine:
                     events = self._close_question_locked(run)
         return events
 
-    def publish_events(self, events: list[PendingEvent] | tuple[PendingEvent, ...]) -> None:
-        """Publish already-committed departure events after the room lock is released."""
-        self._reap_timers()
-        self._publish(list(events))
-
     def on_disconnect(self, session_id: str) -> tuple[PendingEvent, ...]:
         return ()
 
-    def close_room(self, room_code: str) -> None:
+    def close_room(self, room_code: str, *, stream: RoomEventStream | None = None) -> None:
         with self._lock:
-            run = self._runs.pop(room_code, None)
-            if run:
+            run = self._runs.get(room_code)
+            if run and (stream is None or run.events is stream):
+                self._runs.pop(room_code)
                 self._close_locked(run)
                 self._cancel_run_timers_locked(run)
                 for sid, code in tuple(self._session_room.items()):
                     if code == room_code:
                         self._session_room.pop(sid, None)
-        self._reap_timers()
+        self._reap_timers(room_code, wait=True)
 
     def _close_locked(self, run: QuizRun) -> None:
         run.closed = True
@@ -287,28 +311,34 @@ class QuizEngine:
         timer, run.timer = run.timer, None
         if timer is not None:
             timer.cancel()
-            if timer.ident is not None:
-                self._pending_timer_joins.append(timer)
-            else:
-                self._timers.discard(timer)
-                self._timer_runs.pop(timer, None)
-                run.timers.discard(timer)
+            if timer in self._timer_runs:
+                self._pending_timer_joins.setdefault(run.room_code, set()).add(timer)
 
     def _cancel_run_timers_locked(self, run: QuizRun) -> None:
         for timer in tuple(run.timers):
             timer.cancel()
-            self._pending_timer_joins.append(timer)
+            self._pending_timer_joins.setdefault(run.room_code, set()).add(timer)
 
-    def _reap_timers(self) -> None:
+    def _timer_exited(self, room_code: str, timer: threading.Timer) -> None:
         with self._lock:
-            pending, self._pending_timer_joins = self._pending_timer_joins, []
+            joins = self._pending_timer_joins.get(room_code)
+            if joins is not None:
+                joins.discard(timer)
+                if not joins:
+                    del self._pending_timer_joins[room_code]
+            self._timers.discard(timer)
+            run = self._timer_runs.pop(timer, None)
+            if run is not None:
+                run.timers.discard(timer)
+                if run.timer is timer:
+                    run.timer = None
+
+    def _reap_timers(self, room_code: str, *, wait: bool = False) -> None:
+        with self._lock:
+            pending = tuple(self._pending_timer_joins.get(room_code, ()))
         current = threading.current_thread()
         for timer in pending:
-            if timer is not current:
+            if wait and timer is not current:
                 timer.join(timeout=2)
             if not timer.is_alive():
-                with self._lock:
-                    self._timers.discard(timer)
-                    run = self._timer_runs.pop(timer, None)
-                    if run is not None:
-                        run.timers.discard(timer)
+                self._timer_exited(room_code, timer)

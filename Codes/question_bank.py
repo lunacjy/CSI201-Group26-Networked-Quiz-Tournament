@@ -75,6 +75,10 @@ def _text(value: object, where: str, low: int, high: int) -> str:
 def _option_text(value: object, where: str) -> str:
     if not isinstance(value, str) or not 1 <= len(value) <= 200:
         raise QuestionBankError(f"{where} must be a string with 1-200 characters")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise QuestionBankError(f"{where} is not valid UTF-8") from exc
     return value
 
 
