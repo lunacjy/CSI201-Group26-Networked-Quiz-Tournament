@@ -6,7 +6,7 @@ import secrets
 import threading
 from typing import Any
 
-from message_router import PendingEvent, RequestContext, ServiceResult
+from message_router import PendingEvent, RequestContext, RoomEventStream, ServiceResult
 
 
 @dataclass
@@ -22,6 +22,7 @@ class Room:
     code: str
     quiz_id: str
     host_id: str
+    events: RoomEventStream
     players: dict[str, Player] = field(default_factory=dict)
     status: str = "LOBBY"
     joined_order: list[str] = field(default_factory=list)
@@ -60,6 +61,12 @@ class RoomManager:
             "room_code": room.code, "host_id": host.user_id if host else "",
             "players": self._players(room)})
 
+    @staticmethod
+    def _response(ctx: RequestContext, room: Room, response_type: str,
+                  payload: dict, events: tuple[PendingEvent, ...]) -> ServiceResult:
+        release = room.events.stage(events) if ctx.defer_room_events else None
+        return ServiceResult.success(response_type, payload, events, release)
+
     def list_rooms(self, ctx: RequestContext, payload: dict) -> ServiceResult:
         with self._lock:
             rooms = [
@@ -82,14 +89,15 @@ class RoomManager:
             code = secrets.token_hex(3).upper()
             while code in self._rooms:
                 code = secrets.token_hex(3).upper()
-            room = Room(code, quiz_id, ctx.session_id)
+            room = Room(code, quiz_id, ctx.session_id, self.quiz_engine.new_event_stream())
             room.players[ctx.session_id] = Player(ctx.session_id, ctx.user_id, ctx.name)
+            room.events.add_member(ctx.session_id)
             room.joined_order.append(ctx.session_id)
             self._rooms[code] = room
             self._membership[ctx.session_id] = code
-            event = self._status_event(room)
-            view = self._view(room)
-        return ServiceResult.success("CREATE_ROOM_RESPONSE", {"room_code": code, "room": view}, (event,))
+            return self._response(ctx, room, "CREATE_ROOM_RESPONSE",
+                                  {"room_code": code, "room": self._view(room)},
+                                  (self._status_event(room),))
 
     def join_room(self, ctx: RequestContext, payload: dict) -> ServiceResult:
         with self._lock:
@@ -104,10 +112,11 @@ class RoomManager:
                 if len(room.players) >= self.MAX_PLAYERS:
                     return ServiceResult.error("ROOM_FULL", "Room is full.")
                 room.players[ctx.session_id] = Player(ctx.session_id, ctx.user_id, ctx.name)
+                room.events.add_member(ctx.session_id)
                 room.joined_order.append(ctx.session_id)
                 self._membership[ctx.session_id] = room.code
-                return ServiceResult.success("JOIN_ROOM_RESPONSE", {"room": self._view(room)},
-                                             (self._status_event(room),))
+                return self._response(ctx, room, "JOIN_ROOM_RESPONSE",
+                                      {"room": self._view(room)}, (self._status_event(room),))
 
     def list_players(self, ctx: RequestContext, payload: dict) -> ServiceResult:
         with self._lock:
@@ -127,15 +136,15 @@ class RoomManager:
                 if room.status != "LOBBY":
                     return ServiceResult.error("INVALID_STATE", "Readiness can change only in a lobby.")
                 room.players[ctx.session_id].ready = payload["ready"]
-                return ServiceResult.success("READY_RESPONSE", {"ready": payload["ready"]},
-                                             (self._status_event(room),))
+                return self._response(ctx, room, "READY_RESPONSE", {"ready": payload["ready"]},
+                                      (self._status_event(room),))
 
     def start_room(self, ctx: RequestContext, payload: dict) -> ServiceResult:
         with self._lock:
             room = self._room(ctx.session_id)
             if room is None:
                 return ServiceResult.error("NOT_IN_ROOM", "Join a room first.")
-            with room.lock:
+            with room.lock, self.quiz_engine.transition_lock:
                 if room.host_id != ctx.session_id:
                     return ServiceResult.error("NOT_ROOM_HOST", "Only the host can start.")
                 if room.status != "LOBBY":
@@ -145,58 +154,65 @@ class RoomManager:
                 # Engine state is prepared while room transition is protected. No events
                 # are emitted until the state commit succeeds.
                 started = self.quiz_engine.start_room(room.code, room.quiz_id,
-                                                       tuple(room.players.values()))
+                                                       tuple(room.players.values()), stream=room.events)
                 if isinstance(started, ServiceResult):
                     return started
                 room.status = "PLAYING"
-                return ServiceResult.success("START_QUIZ_RESPONSE", {"success": True}, started)
+                return self._response(ctx, room, "START_QUIZ_RESPONSE", {"success": True}, started)
 
     def leave_room(self, ctx: RequestContext, payload: dict) -> ServiceResult:
-        events = self._remove_player(ctx.session_id, disconnected=False)
-        if events is None:
-            return ServiceResult.error("NOT_IN_ROOM", "You are not in a room.")
-        return ServiceResult.success("LEAVE_ROOM_RESPONSE", {"success": True}, events)
+        return self._remove_player(ctx.session_id, ctx) or ServiceResult.error(
+            "NOT_IN_ROOM", "You are not in a room.")
 
-    def _remove_player(self, session_id: str, disconnected: bool) -> tuple[PendingEvent, ...] | None:
-        events: list[PendingEvent] = []
-        quiz_events: list[PendingEvent] = []
-        close_code: str | None = None
+    def _remove_player(self, session_id: str, ctx: RequestContext | None) -> ServiceResult | None:
+        release = None
+        result = None
         with self._lock:
             room = self._room(session_id)
             if room is None:
                 return None
-            with room.lock:
+            with room.lock, self.quiz_engine.transition_lock:
                 was_host = room.host_id == session_id
                 room.players.pop(session_id, None)
+                room.events.remove_member(session_id)
                 room.joined_order = [
                     sid for sid in room.joined_order if sid != session_id
                 ]
                 self._membership.pop(session_id, None)
-                if hasattr(self.quiz_engine, "player_departed"):
-                    quiz_events.extend(self.quiz_engine.player_departed(room.code, session_id))
-                if not room.players:
+                quiz_events = tuple(self.quiz_engine.player_departed(room.code, session_id))
+                empty = not room.players
+                if empty:
                     room.status = "CLOSED"
                     self._rooms.pop(room.code, None)
-                    close_code = room.code
-                    events.append(PendingEvent("ROOM_CLOSED_EVENT", (session_id,),
-                                                {"room_code": room.code, "reason": "EMPTY_ROOM"}))
+                    status = PendingEvent("ROOM_CLOSED_EVENT", (session_id,),
+                                          {"room_code": room.code, "reason": "EMPTY_ROOM"})
                 else:
                     if was_host:
                         room.host_id = next((s for s in room.joined_order if s in room.players), next(iter(room.players)))
-                    events.append(self._status_event(room))
-        if close_code is not None and hasattr(self.quiz_engine, "close_room"):
-            self.quiz_engine.close_room(close_code)
-        if hasattr(self.quiz_engine, "publish_events"):
-            self.quiz_engine.publish_events(quiz_events)
-        return tuple(events)
+                    status = self._status_event(room)
+                if ctx is None:
+                    release = room.events.stage((*quiz_events, status))
+                elif ctx.defer_room_events:
+                    result = self._response(ctx, room, "LEAVE_ROOM_RESPONSE",
+                                            {"success": True}, (*quiz_events, status))
+                else:
+                    if quiz_events:
+                        release = room.events.stage(quiz_events)
+                    result = ServiceResult.success("LEAVE_ROOM_RESPONSE", {"success": True}, (status,))
+        if release is not None:
+            release()
+        if empty:
+            self.quiz_engine.close_room(room.code, stream=room.events)
+        return result
 
     def on_disconnect(self, session_id: str) -> tuple[PendingEvent, ...]:
-        return self._remove_player(session_id, disconnected=True) or ()
+        self._remove_player(session_id, None)
+        return ()
 
-    def mark_finished(self, room_code: str) -> None:
+    def mark_finished(self, room_code: str, stream: RoomEventStream) -> None:
         with self._lock:
             room = self._rooms.get(room_code)
-            if room:
+            if room and room.events is stream:
                 with room.lock:
                     room.status = "FINISHED"
 
