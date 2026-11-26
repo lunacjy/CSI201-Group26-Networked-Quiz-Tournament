@@ -8,7 +8,18 @@ import sys
 import threading
 import uuid
 
-from protocol import FrameBuffer, FramingError, decode_payload, encode_message
+from protocol import FrameBuffer, FramingError, ProtocolError, decode_payload, encode_message
+
+
+# Keep printable Unicode and grapheme joiners intact. Escape terminal controls,
+# Unicode line/paragraph separators and explicit bidirectional controls.
+_OPTION_DISPLAY_ESCAPES = {
+    code: f"\\x{code:02x}" for code in (*range(0x20), *range(0x7f, 0xa0))
+}
+_OPTION_DISPLAY_ESCAPES.update({
+    code: f"\\u{code:04x}"
+    for code in (0x061c, 0x200e, 0x200f, *range(0x2028, 0x202f), *range(0x2066, 0x206a))
+})
 
 
 class Client:
@@ -147,7 +158,8 @@ class Client:
         elif typ == "QUESTION_EVENT":
             self.current_question_id = p["question_id"]
             print(f"Question {p['number']}: {p['text']} [{p['time_limit']}s, {p['points']} points]")
-            for key, value in p["options"].items(): print(f"  {key}. {value}")
+            for key, value in p["options"].items():
+                print(f"  {key}. {value.translate(_OPTION_DISPLAY_ESCAPES)}")
             print("Answer with /answer A|B|C|D")
         elif typ == "QUESTION_RESULT_EVENT":
             if getattr(self, "current_question_id", None) == p["question_id"]:
@@ -179,6 +191,9 @@ class Client:
         elif typ == "QUIZ_STARTED_EVENT": print(f"Quiz started: {p['title']} ({p['total_questions']} questions)")
         elif typ == "CREATE_ROOM_RESPONSE": print(f"Room created: {p['room_code']}")
         elif typ == "JOIN_ROOM_RESPONSE": print(f"Joined room {p['room']['room_code']}")
+        elif typ == "LEAVE_ROOM_RESPONSE":
+            self.current_question_id = None
+            print("OK", self._safe_display_value(p))
         elif typ == "ANSWER_RESPONSE": print("Answer accepted; points are confirmed when the question closes.")
         elif typ.endswith("_RESPONSE"):
             print("OK", self._safe_display_value(p))
@@ -228,7 +243,8 @@ class Client:
                 typ, payload = mapping[cmd]
             else: self._print("Unknown command. Type /help."); return True
             try: self.request(typ, payload)
-            except (OSError, TimeoutError, queue.Empty) as exc: self._print(f"Request failed: {exc}")
+            except (OSError, queue.Empty, ProtocolError) as exc:
+                self._print(f"Request failed: {exc}")
         return True
 
     def close(self) -> None:
